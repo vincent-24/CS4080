@@ -1,0 +1,6 @@
+var a = 8;
+var b = 4;
+var c = 0;
+
+print a / b;
+print a / c;

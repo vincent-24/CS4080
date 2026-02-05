@@ -1,0 +1,10 @@
+# Java
+*.class
+
+# C
+*.o
+*.out
+*.dSYM/
+
+# Executables
+HW*/main
