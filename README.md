@@ -1,6 +1,6 @@
 # CS4080: Programming Languages
 
-**Author:** Vincent Terrelonge
+**Author:** Vincent Terrelonge  
 **Repository Type:** Homework & Assignments
 
 ## Overview

@@ -6,5 +6,8 @@
 *.out
 *.dSYM/
 
+# MacOS
+*.DS_Store
+
 # Executables
 HW*/main
