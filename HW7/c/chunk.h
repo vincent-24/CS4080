@@ -15,10 +15,22 @@ typedef enum {
 } OpCode;
 
 typedef struct {
-    int count;
-    int capacity; 
-    uint8_t* code;
-    ValueArray constants;
+  int line;
+  int runLength;
+} LineRun;
+
+typedef struct {
+  int count;
+  int capacity;
+  LineRun* values;
+} LineArray;
+
+typedef struct {
+  int count;
+  int capacity;
+  uint8_t* code;
+  ValueArray constants;
+  LineArray lines;
 } Chunk;
 
 void initChunk(Chunk* chunk);

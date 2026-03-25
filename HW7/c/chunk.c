@@ -24,9 +24,29 @@ void writeChunk(Chunk* chunk, uint8_t byte, int line) {
 
   chunk->code[chunk->count] = byte;
   chunk->count++;
+
+  if (chunk->lines.count > 0 && chunk->lines.values[chunk->lines.count - 1].line == line) {
+    chunk->lines.values[chunk->lines.count - 1].runLength++;
+  } else {
+    if (chunk->lines.capacity < chunk->lines.count + 1) {
+      int oldCapacity = chunk->lines.capacity;
+      chunk->lines.capacity = GROW_CAPACITY(oldCapacity);
+      chunk->lines.values = GROW_ARRAY(LineRun, chunk->lines.values, oldCapacity, chunk->lines.capacity);
+    }
+    chunk->lines.values[chunk->lines.count].line = line;
+    chunk->lines.values[chunk->lines.count].runLength = 1;
+    chunk->lines.count++;
+  }
 }
 
 int getLine(Chunk* chunk, int instruction) {
+  int offset = 0;
+  for (int i = 0; i < chunk->lines.count; i++) {
+    if (instruction < offset + chunk->lines.values[i].runLength) {
+      return chunk->lines.values[i].line;
+    }
+    offset += chunk->lines.values[i].runLength;
+  }
   return -1; 
 }
 
