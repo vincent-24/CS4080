@@ -93,6 +93,7 @@ typedef struct Compiler {
 
 typedef struct ClassCompiler {
   struct ClassCompiler* enclosing;
+  bool hasSuperclass;
 } ClassCompiler;
 
 Parser parser;
@@ -643,6 +644,18 @@ static void variable(bool canAssign) {
   namedVariable(parser.previous, canAssign);
 }
 
+static Token syntheticToken(const char* text) {
+  Token token;
+  token.start = text;
+  token.length = (int)strlen(text);
+  return token;
+}
+
+static bool identifiersEqual(Token* a, Token* b) {
+  if (a->length != b->length) return false;
+  return memcmp(a->start, b->start, a->length) == 0;
+}
+
 static void this_(bool canAssign) {
   (void)canAssign;
   if (currentClass == NULL) {
@@ -902,8 +915,29 @@ static void classDeclaration() {
   defineVariable(global);
 
   ClassCompiler classCompiler;
+  classCompiler.hasSuperclass = false;
   classCompiler.enclosing = currentClass;
   currentClass = &classCompiler;
+
+  if (match(TOKEN_LESS)) {
+    consume(TOKEN_IDENTIFIER, "Expect superclass name.");
+    variable(false);
+
+    if (identifiersEqual(&className, &parser.previous)) {
+      error("A class can't inherit from itself.");
+    }
+
+    namedVariable(className, false);
+    emitByte(OP_INHERIT);
+
+    beginScope();
+    Token superToken = syntheticToken("super");
+    int previous = localMapGet(&superToken);
+    addLocal(superToken, previous, false);
+    defineVariable(0);
+
+    classCompiler.hasSuperclass = true;
+  }
 
   namedVariable(className, false);
   consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
@@ -912,6 +946,10 @@ static void classDeclaration() {
   }
   consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
   emitByte(OP_POP);
+
+  if (classCompiler.hasSuperclass) {
+    endScope();
+  }
 
   currentClass = currentClass->enclosing;
 }

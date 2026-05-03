@@ -614,6 +614,16 @@ static InterpretResult run() {
         LOAD_FRAME();
         break;
       }
+      case OP_INHERIT: {
+        Value superclass = peek(1);
+        if (!IS_CLASS(superclass)) {
+          RUNTIME_ERROR("Superclass must be a class.");
+        }
+        ObjClass* subclass = AS_CLASS(peek(0));
+        tableAddAll(&AS_CLASS(superclass)->methods, &subclass->methods);
+        pop();
+        break;
+      }
       case OP_METHOD:
         defineMethod(READ_STRING());
         break;
