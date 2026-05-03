@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "object.h"
+#include "table.h"
 
 #define ALLOCATE(type, count) \
     (type*)reallocate(NULL, 0, sizeof(type) * (count))
@@ -21,9 +22,10 @@
     reallocate(pointer, sizeof(type) * (oldCount), 0)
 
 void* reallocate(void* pointer, size_t oldSize, size_t newSize);
+void markObject(Obj* object);
+void markValue(Value value);
+void markTable(Table* table);
+void collectGarbage(void);
 void freeObjects(void);
-void initHeap(void);
-void* allocateBlock(size_t size);
-void freeBlock(void* pointer);
 
 #endif

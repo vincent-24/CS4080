@@ -107,6 +107,15 @@ void tableAddAll(Table* from, Table* to) {
   }
 }
 
+void tableRemoveWhite(Table* table) {
+  for (int i = 0; i < table->capacity; i++) {
+    Entry* entry = &table->entries[i];
+    if (entry->key != NULL && !entry->key->obj.isMarked) {
+      tableDelete(table, entry->key);
+    }
+  }
+}
+
 ObjString* tableFindString(Table* table, const char* chars, int length, uint32_t hash) {
   if (table->count == 0) return NULL;
 

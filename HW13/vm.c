@@ -162,6 +162,11 @@ static void defineNative(const char* name, NativeFn function, int arity) {
 void initVM(void) {
   resetStack();
   vm.objects = NULL;
+  vm.bytesAllocated = 0;
+  vm.nextGC = 1024 * 1024;
+  vm.grayCount = 0;
+  vm.grayCapacity = 0;
+  vm.grayStack = NULL;
 
   vm.globalCount = 0;
   for (int i = 0; i < GLOBAL_MAX; i++) {
@@ -222,6 +227,15 @@ static bool call(ObjClosure* closure, int argCount) {
 static bool callValue(Value callee, int argCount) {
   if (IS_OBJ(callee)) {
     switch (OBJ_TYPE(callee)) {
+      case OBJ_CLASS: {
+        ObjClass* klass = AS_CLASS(callee);
+        vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
+        if (argCount != 0) {
+          runtimeError("Expected 0 arguments but got %d.", argCount);
+          return false;
+        }
+        return true;
+      }
       case OBJ_CLOSURE:
         return call(AS_CLOSURE(callee), argCount);
       case OBJ_NATIVE: {
@@ -284,8 +298,8 @@ static bool isFalsey(Value value) {
 }
 
 static void concatenate() {
-  ObjString* b = AS_STRING(pop());
-  ObjString* a = AS_STRING(pop());
+  ObjString* b = AS_STRING(peek(0));
+  ObjString* a = AS_STRING(peek(1));
 
   int length = a->length + b->length;
   char* chars = ALLOCATE(char, length + 1);
@@ -294,6 +308,8 @@ static void concatenate() {
   chars[length] = '\0';
 
   ObjString* result = takeString(chars, length);
+  pop();
+  pop();
   push(OBJ_VAL(result));
 }
 
@@ -310,6 +326,7 @@ static InterpretResult run() {
     (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
 #define READ_CONSTANT() \
     (frame->closure->function->chunk.constants.values[READ_BYTE()])
+#define READ_STRING() AS_STRING(READ_CONSTANT())
 #define READ_SLOT() (READ_BYTE())
 #define RUNTIME_ERROR(...) \
     do { STORE_FRAME(); runtimeError(__VA_ARGS__); \
@@ -400,6 +417,33 @@ static InterpretResult run() {
           RUNTIME_ERROR("Undefined variable '%s'.", global->name->chars);
         }
         global->value = peek(0);
+        break;
+      }
+      case OP_GET_PROPERTY: {
+        if (!IS_INSTANCE(peek(0))) {
+          RUNTIME_ERROR("Only instances have properties.");
+        }
+        ObjInstance* instance = AS_INSTANCE(peek(0));
+        ObjString* name = READ_STRING();
+
+        Value value;
+        if (tableGet(&instance->fields, name, &value)) {
+          pop();
+          push(value);
+          break;
+        }
+
+        RUNTIME_ERROR("Undefined property '%s'.", name->chars);
+      }
+      case OP_SET_PROPERTY: {
+        if (!IS_INSTANCE(peek(1))) {
+          RUNTIME_ERROR("Only instances have fields.");
+        }
+        ObjInstance* instance = AS_INSTANCE(peek(1));
+        tableSet(&instance->fields, READ_STRING(), peek(0));
+        Value value = pop();
+        pop();
+        push(value);
         break;
       }
       case OP_EQUAL: {
@@ -495,6 +539,9 @@ static InterpretResult run() {
         closeUpvalues(vm.stackTop - 1);
         pop();
         break;
+      case OP_CLASS:
+        push(OBJ_VAL(newClass(READ_STRING())));
+        break;
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);
@@ -517,6 +564,7 @@ static InterpretResult run() {
 #undef READ_BYTE
 #undef READ_SHORT
 #undef READ_CONSTANT
+#undef READ_STRING
 #undef READ_SLOT
 #undef BINARY_OP
 #undef LOAD_FRAME
