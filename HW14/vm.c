@@ -491,8 +491,16 @@ static InterpretResult run() {
           break;
         }
 
+        ObjString* methodName = name;
+        for (int i = 0; i < name->length; i++) {
+          if (name->chars[i] == '$') {
+            methodName = copyString(name->chars + i + 1, name->length - i - 1);
+            break;
+          }
+        }
+
         STORE_FRAME();
-        if (!bindMethod(instance->klass, name)) {
+        if (!bindMethod(instance->klass, methodName)) {
           return INTERPRET_RUNTIME_ERROR;
         }
         break;
