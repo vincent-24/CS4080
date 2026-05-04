@@ -656,6 +656,30 @@ static bool identifiersEqual(Token* a, Token* b) {
   return memcmp(a->start, b->start, a->length) == 0;
 }
 
+static void super_(bool canAssign) {
+  (void)canAssign;
+  if (currentClass == NULL) {
+    error("Can't use 'super' outside of a class.");
+  } else if (!currentClass->hasSuperclass) {
+    error("Can't use 'super' in a class with no superclass.");
+  }
+
+  consume(TOKEN_DOT, "Expect '.' after 'super'.");
+  consume(TOKEN_IDENTIFIER, "Expect superclass method name.");
+  uint8_t name = makeConstant(OBJ_VAL(copyString(parser.previous.start, parser.previous.length)));
+
+  namedVariable(syntheticToken("this"), false);
+  if (match(TOKEN_LEFT_PAREN)) {
+    uint8_t argCount = argumentList();
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_SUPER_INVOKE, name);
+    emitByte(argCount);
+  } else {
+    namedVariable(syntheticToken("super"), false);
+    emitBytes(OP_GET_SUPER, name);
+  }
+}
+
 static void this_(bool canAssign) {
   (void)canAssign;
   if (currentClass == NULL) {
@@ -723,7 +747,7 @@ ParseRule rules[] = {
   [TOKEN_OR]            = {NULL,     or_,      PREC_OR},
   [TOKEN_PRINT]         = {NULL,     NULL,     PREC_NONE},
   [TOKEN_RETURN]        = {NULL,     NULL,     PREC_NONE},
-  [TOKEN_SUPER]         = {NULL,     NULL,     PREC_NONE},
+  [TOKEN_SUPER]         = {super_,   NULL,     PREC_NONE},
   [TOKEN_SWITCH]        = {NULL,     NULL,     PREC_NONE},
   [TOKEN_THIS]          = {this_,    NULL,     PREC_NONE},
   [TOKEN_TRUE]          = {literal,  NULL,     PREC_NONE},
