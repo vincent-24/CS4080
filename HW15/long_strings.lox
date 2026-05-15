@@ -1,0 +1,10 @@
+var start = clock();
+var i = 0;
+var base = "the quick brown fox jumps over the lazy dog";
+var s = "";
+while (i < 200000) {
+  s = base + base;
+  s = s + base;
+  i = i + 1;
+}
+print clock() - start;

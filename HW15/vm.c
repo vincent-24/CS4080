@@ -121,54 +121,6 @@ static bool numberNative(int argCount, Value* args, Value* result) {
   return false;
 }
 
-static bool hasFieldNative(int argCount, Value* args, Value* result) {
-  (void)argCount;
-  if (!IS_INSTANCE(args[0]) || !IS_STRING(args[1])) {
-    runtimeError("hasField() expects (instance, string).");
-    return false;
-  }
-  Value v;
-  *result = BOOL_VAL(tableGet(&AS_INSTANCE(args[0])->fields,
-                              AS_STRING(args[1]), &v));
-  return true;
-}
-
-static bool getFieldNative(int argCount, Value* args, Value* result) {
-  (void)argCount;
-  if (!IS_INSTANCE(args[0]) || !IS_STRING(args[1])) {
-    runtimeError("getField() expects (instance, string).");
-    return false;
-  }
-  Value v;
-  if (!tableGet(&AS_INSTANCE(args[0])->fields, AS_STRING(args[1]), &v)) {
-    v = NIL_VAL;
-  }
-  *result = v;
-  return true;
-}
-
-static bool setFieldNative(int argCount, Value* args, Value* result) {
-  (void)argCount;
-  if (!IS_INSTANCE(args[0]) || !IS_STRING(args[1])) {
-    runtimeError("setField() expects (instance, string, value).");
-    return false;
-  }
-  tableSet(&AS_INSTANCE(args[0])->fields, AS_STRING(args[1]), args[2]);
-  *result = args[2];
-  return true;
-}
-
-static bool deleteFieldNative(int argCount, Value* args, Value* result) {
-  (void)argCount;
-  if (!IS_INSTANCE(args[0]) || !IS_STRING(args[1])) {
-    runtimeError("deleteField() expects (instance, string).");
-    return false;
-  }
-  *result = BOOL_VAL(tableDelete(&AS_INSTANCE(args[0])->fields,
-                                 AS_STRING(args[1])));
-  return true;
-}
-
 static bool readLineNative(int argCount, Value* args, Value* result) {
   (void)argCount; (void)args;
   char buffer[1024];
@@ -225,6 +177,9 @@ void initVM(void) {
   }
   initTable(&vm.strings);
 
+  vm.initString = NULL;
+  vm.initString = copyString("init", 4);
+
   defineNative("clock", clockNative, 0);
   defineNative("sqrt", sqrtNative, 1);
   defineNative("abs", absNative, 1);
@@ -233,14 +188,11 @@ void initVM(void) {
   defineNative("strLen", strLenNative, 1);
   defineNative("number", numberNative, 1);
   defineNative("readLine", readLineNative, 0);
-  defineNative("hasField", hasFieldNative, 2);
-  defineNative("getField", getFieldNative, 2);
-  defineNative("setField", setFieldNative, 3);
-  defineNative("deleteField", deleteFieldNative, 2);
 }
 
 void freeVM(void) {
   freeTable(&vm.strings);
+  vm.initString = NULL;
   freeObjects();
 }
 
@@ -279,10 +231,18 @@ static bool call(ObjClosure* closure, int argCount) {
 static bool callValue(Value callee, int argCount) {
   if (IS_OBJ(callee)) {
     switch (OBJ_TYPE(callee)) {
+      case OBJ_BOUND_METHOD: {
+        ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
+        vm.stackTop[-argCount - 1] = bound->receiver;
+        return call(bound->method, argCount);
+      }
       case OBJ_CLASS: {
         ObjClass* klass = AS_CLASS(callee);
         vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
-        if (argCount != 0) {
+        Value initializer;
+        if (tableGet(&klass->methods, vm.initString, &initializer)) {
+          return call(AS_CLOSURE(initializer), argCount);
+        } else if (argCount != 0) {
           runtimeError("Expected 0 arguments but got %d.", argCount);
           return false;
         }
@@ -310,6 +270,45 @@ static bool callValue(Value callee, int argCount) {
   }
   runtimeError("Can only call functions and classes.");
   return false;
+}
+
+static bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount) {
+  Value method;
+  if (!tableGet(&klass->methods, name, &method)) {
+    runtimeError("Undefined property '%s'.", name->chars);
+    return false;
+  }
+  return call(AS_CLOSURE(method), argCount);
+}
+
+static bool invoke(ObjString* name, int argCount) {
+  Value receiver = peek(argCount);
+  if (!IS_INSTANCE(receiver)) {
+    runtimeError("Only instances have methods.");
+    return false;
+  }
+  ObjInstance* instance = AS_INSTANCE(receiver);
+
+  Value value;
+  if (tableGet(&instance->fields, name, &value)) {
+    vm.stackTop[-argCount - 1] = value;
+    return callValue(value, argCount);
+  }
+
+  return invokeFromClass(instance->klass, name, argCount);
+}
+
+static bool bindMethod(ObjClass* klass, ObjString* name) {
+  Value method;
+  if (!tableGet(&klass->methods, name, &method)) {
+    runtimeError("Undefined property '%s'.", name->chars);
+    return false;
+  }
+
+  ObjBoundMethod* bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+  pop();
+  push(OBJ_VAL(bound));
+  return true;
 }
 
 static ObjUpvalue* captureUpvalue(Value* local) {
@@ -343,6 +342,21 @@ static void closeUpvalues(Value* last) {
     upvalue->location = &upvalue->closed;
     vm.openUpvalues = upvalue->next;
   }
+}
+
+static void defineMethod(ObjString* name) {
+  Value method = peek(0);
+  ObjClass* klass = AS_CLASS(peek(1));
+  ObjClosure* closure = AS_CLOSURE(method);
+  closure->owner = klass;
+
+  tableSet(&klass->ownMethods, name, method);
+
+  Value existing;
+  if (!tableGet(&klass->methods, name, &existing)) {
+    tableSet(&klass->methods, name, method);
+  }
+  pop();
 }
 
 static bool isFalsey(Value value) {
@@ -485,7 +499,19 @@ static InterpretResult run() {
           break;
         }
 
-        RUNTIME_ERROR("Undefined property '%s'.", name->chars);
+        ObjString* methodName = name;
+        for (int i = 0; i < name->length; i++) {
+          if (name->chars[i] == '$') {
+            methodName = copyString(name->chars + i + 1, name->length - i - 1);
+            break;
+          }
+        }
+
+        STORE_FRAME();
+        if (!bindMethod(instance->klass, methodName)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
       }
       case OP_SET_PROPERTY: {
         if (!IS_INSTANCE(peek(1))) {
@@ -593,6 +619,68 @@ static InterpretResult run() {
         break;
       case OP_CLASS:
         push(OBJ_VAL(newClass(READ_STRING())));
+        break;
+      case OP_INVOKE: {
+        ObjString* method = READ_STRING();
+        int argCount = READ_BYTE();
+        STORE_FRAME();
+        if (!invoke(method, argCount)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        LOAD_FRAME();
+        break;
+      }
+      case OP_INNER: {
+        ObjString* name = READ_STRING();
+        int argCount = READ_BYTE();
+        Value receiver = peek(argCount);
+        ObjClass* owner = frame->closure->owner;
+        ObjInstance* instance = AS_INSTANCE(receiver);
+
+        ObjClass* path[64];
+        int pathLen = 0;
+        for (ObjClass* k = instance->klass;
+             k != NULL && k != owner && pathLen < 64;
+             k = k->superclass) {
+          path[pathLen++] = k;
+        }
+
+        Value method = NIL_VAL;
+        bool found = false;
+        for (int i = pathLen - 1; i >= 0; i--) {
+          if (tableGet(&path[i]->ownMethods, name, &method)) {
+            found = true;
+            break;
+          }
+        }
+
+        if (!found) {
+          vm.stackTop -= argCount;
+          *(vm.stackTop - 1) = NIL_VAL;
+          break;
+        }
+
+        STORE_FRAME();
+        if (!call(AS_CLOSURE(method), argCount)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        LOAD_FRAME();
+        break;
+      }
+      case OP_INHERIT: {
+        Value superclass = peek(1);
+        if (!IS_CLASS(superclass)) {
+          RUNTIME_ERROR("Superclass must be a class.");
+        }
+        ObjClass* subclass = AS_CLASS(peek(0));
+        ObjClass* superKlass = AS_CLASS(superclass);
+        tableAddAll(&superKlass->methods, &subclass->methods);
+        subclass->superclass = superKlass;
+        pop();
+        break;
+      }
+      case OP_METHOD:
+        defineMethod(READ_STRING());
         break;
       case OP_RETURN: {
         Value result = pop();

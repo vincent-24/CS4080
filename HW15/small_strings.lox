@@ -1,0 +1,12 @@
+var start = clock();
+var i = 0;
+var s = "";
+while (i < 200000) {
+  s = "a" + "b";
+  s = s + "c";
+  s = "x" + "y";
+  s = "p" + "q";
+  i = i + 1;
+}
+print clock() - start;
+print s;

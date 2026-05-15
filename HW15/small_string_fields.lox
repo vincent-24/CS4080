@@ -1,0 +1,19 @@
+class Tag {
+  init(a, b, c) {
+    this.a = a;
+    this.b = b;
+    this.c = c;
+  }
+  all() { return this.a + this.b + this.c; }
+}
+
+var start = clock();
+var i = 0;
+var t = Tag("a", "b", "c");
+var s = "";
+while (i < 100000) {
+  s = t.all();
+  i = i + 1;
+}
+print clock() - start;
+print s;
